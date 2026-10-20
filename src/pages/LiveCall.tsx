@@ -63,6 +63,9 @@ export default function LiveCall() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recognitionRef = useRef<RecognitionLike | null>(null);
   const recognitionActiveRef = useRef(false);
+  const assistantSpeakingRef = useRef(false);
+  const speechGenerationRef = useRef(0);
+  const mutedRef = useRef(muted);
   const endedRef = useRef(false);
   const endingRef = useRef(false);
   const recorderStartRef = useRef(0);
@@ -112,26 +115,44 @@ export default function LiveCall() {
   }, [id]);
 
   const startRecognition = useCallback((recognition: RecognitionLike) => {
-    if (!recognitionActiveRef.current || endedRef.current || endingRef.current || muted) return;
+    if (!recognitionActiveRef.current || endedRef.current || endingRef.current || mutedRef.current || assistantSpeakingRef.current) return;
     try {
       recognition.start();
       setIsListening(true);
     } catch {
       setIsListening(false);
     }
-  }, [muted]);
+  }, []);
+
+  const resumeRecognitionAfterSpeech = useCallback((generation: number) => {
+    if (generation !== speechGenerationRef.current || !assistantSpeakingRef.current) return;
+    assistantSpeakingRef.current = false;
+    setSpeaking(false);
+    const recognition = recognitionRef.current;
+    if (!recognition || !streamRef.current || mutedRef.current || endedRef.current || endingRef.current) return;
+    recognitionActiveRef.current = true;
+    window.setTimeout(() => startRecognition(recognition), 250);
+  }, [startRecognition]);
 
   const speak = useCallback((text: string) => {
     if (!('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) return;
+    const generation = ++speechGenerationRef.current;
     window.speechSynthesis.cancel();
+    assistantSpeakingRef.current = true;
+    const recognition = recognitionRef.current;
+    if (recognition) {
+      recognitionActiveRef.current = false;
+      recognition.stop();
+      setIsListening(false);
+    }
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = call?.productContext.language === 'Hindi' ? 'hi-IN' : 'en-IN';
     utterance.rate = 0.97;
     utterance.onstart = () => setSpeaking(true);
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
+    utterance.onend = () => resumeRecognitionAfterSpeech(generation);
+    utterance.onerror = () => resumeRecognitionAfterSpeech(generation);
     window.speechSynthesis.speak(utterance);
-  }, [call?.productContext.language]);
+  }, [call?.productContext.language, resumeRecognitionAfterSpeech]);
 
   const sendCustomerText = useCallback((rawText: string) => {
     const text = rawText.trim();
@@ -232,6 +253,9 @@ export default function LiveCall() {
         recognition.lang = fetched.productContext.language === 'Hindi' ? 'hi-IN' : 'en-IN';
         recognitionActiveRef.current = true;
         recognition.onresult = (event) => {
+          // Web Speech can deliver a late result after stop(); never attribute
+          // the assistant's own spoken reply to the customer.
+          if (assistantSpeakingRef.current || endedRef.current || endingRef.current) return;
           const finalized: string[] = [];
           let interimText = '';
           for (let index = event.resultIndex; index < event.results.length; index += 1) {
@@ -256,7 +280,7 @@ export default function LiveCall() {
         };
         recognition.onend = () => {
           setIsListening(false);
-          if (recognitionActiveRef.current && !endedRef.current && !endingRef.current && !muted) window.setTimeout(() => startRecognition(recognition), 300);
+          if (recognitionActiveRef.current && !assistantSpeakingRef.current && !endedRef.current && !endingRef.current && !mutedRef.current) window.setTimeout(() => startRecognition(recognition), 300);
         };
         startRecognition(recognition);
       } else {
@@ -306,6 +330,7 @@ export default function LiveCall() {
   }, [call?.transcript.length, interim, thinking]);
 
   useEffect(() => {
+    mutedRef.current = muted;
     if (!recognitionRef.current) return;
     recognitionActiveRef.current = !muted && call?.state === 'in_progress' && !endedRef.current;
     streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = !muted; });
@@ -321,6 +346,18 @@ export default function LiveCall() {
     if (!text.trim()) return;
     setInput('');
     await sendCustomerText(text);
+  }
+
+  function interruptAssistant() {
+    speechGenerationRef.current += 1;
+    window.speechSynthesis?.cancel();
+    assistantSpeakingRef.current = false;
+    setSpeaking(false);
+    const recognition = recognitionRef.current;
+    if (recognition && streamRef.current && !mutedRef.current && !endedRef.current && !endingRef.current) {
+      recognitionActiveRef.current = true;
+      window.setTimeout(() => startRecognition(recognition), 250);
+    }
   }
 
   async function retryFinishCall() {
@@ -368,7 +405,7 @@ export default function LiveCall() {
           {recordingError && <div className="recording-warning"><AlertCircle size={14} /><span>{recordingError}</span></div>}
           <form className="message-composer" onSubmit={handleSend}><input value={input} onChange={(event) => setInput(event.target.value)} placeholder={voiceUnavailable ? 'Type what the customer said…' : 'Type a message or use voice input…'} aria-label="Customer message" /><button className="send-button" aria-label="Send message" disabled={!input.trim() || thinking || ending}><Send size={17} /></button></form>
           <div className="composer-hint"><span><span className={`mic-status-dot ${isListening && !muted ? 'mic-active' : ''}`} />{muted ? 'Microphone muted' : isListening ? 'Listening for customer' : voiceUnavailable ? 'Text input ready' : 'Microphone on'}</span><span>Enter to send</span></div>
-          <div className="call-controls"><button className={`control-button ${muted ? 'control-muted' : ''}`} onClick={() => setMuted((value) => !value)} aria-label={muted ? 'Unmute microphone' : 'Mute microphone'}><span className="control-icon">{muted ? <MicOff size={18} /> : <Mic size={18} />}</span><span>{muted ? 'Unmute' : 'Mute mic'}</span></button><button className="control-button" onClick={() => { window.speechSynthesis?.cancel(); setSpeaking(false); }} disabled={!speaking} aria-label="Interrupt assistant speech"><span className="control-icon">{speaking ? <VolumeX size={18} /> : <Volume2 size={18} />}</span><span>{speaking ? 'Interrupt' : 'Speaker'}</span></button><div className="controls-spacer" /><button className="button button-danger" onClick={() => void endCall()} disabled={ending}>{ending ? <><span className="spinner spinner-light" /> Ending…</> : <><Square size={14} fill="currentColor" /> End call</>}</button></div>
+          <div className="call-controls"><button className={`control-button ${muted ? 'control-muted' : ''}`} onClick={() => setMuted((value) => { mutedRef.current = !value; return !value; })} aria-label={muted ? 'Unmute microphone' : 'Mute microphone'}><span className="control-icon">{muted ? <MicOff size={18} /> : <Mic size={18} />}</span><span>{muted ? 'Unmute' : 'Mute mic'}</span></button><button className="control-button" onClick={interruptAssistant} disabled={!speaking} aria-label="Interrupt assistant speech"><span className="control-icon">{speaking ? <VolumeX size={18} /> : <Volume2 size={18} />}</span><span>{speaking ? 'Interrupt' : 'Speaker'}</span></button><div className="controls-spacer" /><button className="button button-danger" onClick={() => void endCall()} disabled={ending}>{ending ? <><span className="spinner spinner-light" /> Ending…</> : <><Square size={14} fill="currentColor" /> End call</>}</button></div>
         </> : <div className="ended-call-actions"><div className="ended-success"><span><Check size={16} /></span><div><strong>Call saved</strong><small>Transcript, status and recap are ready.</small></div></div><Link to={`/calls/${call.id}`} className="button button-primary">View call details <ArrowRight size={16} /></Link><Link to="/new-call" className="button button-secondary">Start another call</Link></div>}
       </section>
       <aside className="call-side-panel">
