@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: sankar-voice-sales-demo
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /tmp/voxline
+      - key: AI_PROVIDER
+        value: local

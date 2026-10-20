@@ -118,3 +118,9 @@ For another Docker host, build with `docker build -t voxline .`, run with `-p 30
 ## Submission demo script
 
 See [`DEMO-SCRIPT.md`](./DEMO-SCRIPT.md) for a short screen-recording walkthrough.
+
+### No-cost demo deployment
+
+For a no-cost demonstration, create a Render Blueprint from `render-demo.yaml` by setting **Blueprint Path** to `render-demo.yaml`. This configuration uses a Free web service, stores SQLite files and recordings in `/tmp/voxline`, and selects the transparent local fallback because a Render service cannot reach Ollama running on your computer. Add a hosted AI provider and server-side key in Render's environment settings if you need generated AI replies in the deployed app.
+
+Render Free web services spin down after 15 minutes without traffic, and their filesystem is ephemeral. Call history and recordings can be lost when the service restarts or redeploys, so use this only for a demo. For durable call data and recordings, use the paid persistent-disk configuration in the root `render.yaml`. See [Render Free instance limitations](https://render.com/docs/free) and [Render Blueprint setup](https://render.com/docs/infrastructure-as-code).
