@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: sankar-voice-sales
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /opt/render/project/src/data
+      - key: AI_PROVIDER
+        value: local
+      - key: OLLAMA_MODEL
+        value: qwen3.5:4b
+    disk:
+      name: voice-sales-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
